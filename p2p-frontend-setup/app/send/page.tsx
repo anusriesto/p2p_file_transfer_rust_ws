@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { generateId } from "@/lib/utils";
 import Link from "next/link";
+import { error } from "console";
+import { json } from "stream/consumers";
 
 export default function SendPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -53,6 +55,50 @@ export default function SendPage() {
   };
 
   const connectWebSocket = () => {
+    if (wsRef.current && wsRef.current.readyState ===WebSocket.OPEN){
+      return wsRef.current;
+    }
+    const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+    wsRef.current=ws;
+    ws.onopen=()=>{
+      reconnectAttemptsRef.current=0;
+      const connesctionId=generateId(8);
+      setTransferId(connesctionId);
+      setIsGeneratingLink(false);
+
+      ws.send(
+        JSON.stringify({
+          type:"register",
+          connesctionId:connesctionId,
+        })
+      )
+    };
+
+    ws.onmessage=(event)=>{
+      if (typeof event.data==="string"){
+        const data =JSON.parse(event.data);
+        if (data.type==="receiever-ready"){
+          recipientIdRef.current=data.senderId;
+          setIsConnected(true);
+        } else if (data.type==="transfer-complete"){
+          setTransferProgress(100);
+        }
+
+      }
+    };
+    ws.onerror=(error)=>{
+      setIsGeneratingLink(false);
+    }
+
+    ws.onclose=()=>{
+      setIsConnected(false);
+
+      if (reconnectAttemptsRef.current< MAX_RECONNECT_ATTEMPTS){
+        reconnectAttemptsRef.current++;
+        setTimeout(connectWebSocket,RECONNECT_DELAY);
+      }
+    };
+     return ws;
    
   };
 
@@ -111,10 +157,53 @@ export default function SendPage() {
     let offset = 0;
     let chunkCount = 0;
 
+    wsRef.current.send(
+      JSON.stringify({
+        target_id:recipientIdRef.current,
+        type:"file-info",
+        name:file.name,
+        size:file.size,
+        mimeType:file.type ||'application/octet-stream',
+
+      })
+    )
+
     const reader = new FileReader();
 
     reader.onload = (e) => {
       if (!e.target?.result) return;
+      const chunkData=new Uint8Array(e.target.result as ArrayBuffer);
+      const message= {
+        target_id:recipientIdRef.current,
+        type:"file-chunk",
+        chunkNumber:chunkCount,
+      };
+      wsRef.current?.send(JSON.stringify(message));
+      wsRef.current?.send(chunkData);
+      
+      offset+=chunkData.length;
+      chunkCount++;
+      const progress=Math.min(100,Math.floor((offset/file.size)*100));
+      setTransferProgress(progress);
+
+      if (offset<file.size){
+        setTimeout(()=>{
+          const slice =file.slice(offset,offset+CHUNK_SIZE);
+          reader.readAsArrayBuffer(slice);
+
+        },0);
+
+      }
+      else {
+        wsRef.current?.send(
+          JSON.stringify({
+            target_id:recipientIdRef.current,
+            type:"file-end",
+            chunkCount:chunkCount
+          })
+        );
+        setFileSending(false);
+      }
     };
 
     reader.onerror = (e) => {

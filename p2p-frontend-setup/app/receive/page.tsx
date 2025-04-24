@@ -82,6 +82,80 @@ export default function ReceivePage() {
     // setReceivedBytes(0)
     receivedBytes.current = 0;
     setTransferProgress(0);
+
+    const ws =new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+    wsRef.current=ws;
+
+    ws.onopen=()=>{
+      reconnectAttemptsRef.current=0;
+      const connectionId=typeof crypto.randomUUID ==='function' ?
+       crypto.randomUUID()
+       :"fallback-" + Math.random().toString(36).substring(2,15);
+
+      ws.send(
+        JSON.stringify({
+          type:"register",
+          connectionId:connectionId,
+
+        })
+      );
+      ws.send(
+        JSON.stringify({
+          target_id:senderId,
+          type:"receiver-ready",
+          senderId:connectionId,
+        })
+      );
+
+      setIsConnected(true);
+      setIsConnected(false);
+       
+
+
+    };
+    ws.onmessage=(event)=>{
+      if (typeof event.data==="string"){
+        try{
+          const data=JSON.parse(event.data);
+
+          if (data.type==='file-info'){
+            handleFileInfo(data);
+          } else if (data.type==="file-end"){
+            const expectedSize=data.totalBytes || fileMetadata?.size|| 0;
+
+            setTimeout(()=>{
+              if (receivedBytes.current>=expectedSize * 0.95) {
+                completeFileTransfer();
+              }
+            },500);
+          }
+        }catch(e) {
+          console.error(`Error processing message: ${e}`);
+        }
+      } else if (event.data instanceof ArrayBuffer){
+        handleReceivedChunk(event.data);
+      } else if (event.data instanceof Blob) {
+        const reader= new FileReader();
+        reader.onload=()=>{
+          if (reader.result) handleReceivedChunk(reader.result as ArrayBuffer);
+        };
+        reader.readAsArrayBuffer(event.data);
+      }
+    };
+
+    ws.onerror=(error)=> {
+      console.error(`Websocket error : ${error}`);
+    };
+
+    ws.onclose=()=>{
+      setIsConnected(false);
+      setIsConnecting(false);
+
+      if (reconnectAttemptsRef.current<MAX_RECONNECT_ATTEMPTS){
+        reconnectAttemptsRef.current++;
+        setTimeout(connectWebSocket,RECONNECT_DELAY); 
+      }
+    }
   };
 
   const completeFileTransfer = () => {

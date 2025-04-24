@@ -42,7 +42,7 @@ async fn handle_socket(socket:WebSocket,state:AppState){
         connections.insert(conn_id.clone(),tx.clone());
     }
     let (mut sender,mut receiver)=socket.split();
-    let (message_tx,mut message_rx)=mpsc::channel::<Message>; // yahan buffer 100 tha karke
+    let (message_tx,mut message_rx)=mpsc::channel::<Message>(); // yahan buffer 100 tha karke
     let sender_task=tokio::spawn(async move{
         while let Some(msg)=message_rx.recv().await{
             if sender.send(msg).await.is_err(){
@@ -56,7 +56,7 @@ async fn handle_socket(socket:WebSocket,state:AppState){
         let mut interval=interval(Duration::from_secs(30));
         loop{
             interval.tick().await;
-            if ping_tx.send(Message::Ping(vec![])).await.is_err(){
+            if ping_tx.send(Message::Ping(vec![])).is_err(){
                 break;
             }
         }
@@ -65,7 +65,7 @@ async fn handle_socket(socket:WebSocket,state:AppState){
     let forwar_tx=message_tx.clone();
     let forward_task=tokio::spawn(async move{
         while let Ok(msg)=rx.recv().await{
-            if forwar_tx.send(msg).await.is_err(){
+            if forwar_tx.send(msg).is_err(){
                 break;
             }
         }
